@@ -1,0 +1,471 @@
+---
+title: "Using the `flatness` package, illustrated with weather ensemble forecasts"
+output: rmarkdown::html_vignette
+author: Michaël Zamo
+date: 29 June 2021
+vignette: >
+  %\VignetteIndexEntry{Using the flatness package}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+<style>
+body {
+text-align: justify}
+</style>
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>",
+  options(rmarkdown.html_vignette.check_title = FALSE)
+)
+```
+
+In this vignette we first motivate the existence of the `flatness` package and
+its most important implementation, the Jolliffe-Primo flatness tests. Then we
+illustrate its functionalities with data sets from the weather forecasting field.
+
+# Motivation of the `flatness` package
+
+## Limitations of the $\chi^2$ test
+
+The `flatness` package is dedicated to the task of assessing and testing whether
+an histogram of counts in ordered and consecutive categories is flat, i.e. all
+the categories have the same count up to sampling noise.
+
+The flatness of a histogram is traditionally tested with a $\chi^2$
+statistical test, the null hypothesis being that the counts are
+evenly distributed between the categories up to sampling noise. Although this
+test is powerful it is not sensitive to some specific deviations from flatness.
+Let us illustrate this with a synthetic example, following Elmore (2005).
+
+```{r}
+set.seed(42)
+N <- 20
+K <- 21
+ranks <- sample(1:K, size = K * N, replace = TRUE)
+shst <- hst <- hist(ranks, breaks = 0:K + 0.5)
+abline(h = N, lty = 2)
+shst$counts <- sort(shst$counts)
+plot(shst, col ="lightgrey")
+abline(h = N, lty = 2)
+cat("Random counts' chisquare statistics =", chisq.test(hst$counts)$statistic, "\n")
+cat("Sorted counts' chisquare statistics =", chisq.test(shst$counts)$statistic, "\n")
+```
+
+We first randomly draw $420$ integers from a uniform distribution between 1 and
+$K=21$ then calculate the corresponding histogram `hst`. This one seems rather
+flat (i.e. counts are close to the expected theoretical value $N = 20$, drawn as
+the horizontal dashed line) judging from the first plot. Then we tweak the
+histogram by reordering the counts in ascending order to produce a blatantly
+unflat histogram `shst`. Despite the blatant sloping shape of the sorted
+histogram, as confirmed by the second plot, its $\chi^2$ test statistics is the
+same as the one for the first (truly) random histogram. Jolliffe and Primo (2008)
+proposed to decompose the $\chi^2$ test statistic in such a way that one
+can test the existence of such specific deviations to flatness in histograms.
+
+## The Jolliffe-Primo flatness test
+
+The principle of the Jolliffe-Primo test is the following (see Supplementary
+Material to Zamo et al., 2021). Let's suppose a histogram with *K* possible
+ordered categories, each with count $n_i$ (with $i=1,\ldots,K$), and $e$ the
+theoretical count in each category of a perfectly flat histogram (i.e.
+$e = \frac{\sum_{i=1}^Kn_i}{K}$). Then the normalized deviation to flatness
+(i.e. Pearson residuals) of the histogram can be rewritten as a vector
+$$\delta=\left(\frac{n_1 -e}{\sqrt{e}}, \ldots, \frac{n_K - e}{\sqrt{e}}\right).$$
+The squared norm of this vector is just the $\chi^2$ test statistics,
+which explains why it does not change if we permutate the counts (i.e. the
+components of vector $\delta$). This vector can then be projected on a set of
+up to $K - 1$ vectors $u_j$ (with $j =1, \ldots, k \le K -1$). It can be shown
+that, if these vectors are deviates (i.e. the sum of each vector's components is
+zero) and the set is orthonormal, then the squared modules of the projections
+$\delta \cdot u_j$ each approximately and independently follows a $\chi^2$
+distribution with 1 degree of liberty, under the null hypothesis of a flat rank
+histogram. By choosing appropriate deviate vectors $u_j$ we can test whether the
+shape corresponding to each deviate vector is present in a given histogram.
+
+Let's now describe the `ensembles` and `ppensembles` data sets (shipped with the
+`flatness` package) that will be used to illustrate how to use the `flatness`
+package and the Jolliffe-Primo flatness test.
+
+# The `ensembles` and  `ppensembles` datasets
+
+## Ensembles and rank histograms
+
+In Meteorology an ensemble forecast is a set of forecasts of the future state
+of the atmosphere. Each simulated evolution starts from a slightly different
+initial condition and use different evolution algorithm in order to represent
+the uncertainty of the future outcome. Each evolution is called a *member*. When
+forecasting a parameter if the ensemble forecast is a sample from the right
+multivariate probabilistic distribution of the outcome then the outcome and the
+members should be indistinguishable, so that any scalar outcome has the same
+probability to fall between any two consecutive forecast values. If one computes
+the rank of the observation when pooled with members and compute the count in
+each rank over several forecasts, then one should get a flat histogram up to
+sampling noise. This kind of histogram is called a *rank histogram* and its
+flatness can be assessed with scores and statistical tests.
+
+## Contents of the `ensembles` datasets
+
+Several meteorological institutions over the world issue their own ensemble
+forecasts, some of which are made freely available in the [TIGGE](https://www.ecmwf.int/en/forecasts/dataset/thorpex-interactive-grand-global-ensemble) ensemble. The `ensembles` dataset contains several ensemble forecasts for the
+2-m temperature in Blagnac, France and the associated measured temperature.
+
+First load the package and the `ensembles` dataset used for illustrative purpose.
+
+```{r}
+library(flatness)
+ensembles <- ensembles
+is(ensembles)
+names(ensembles)
+```
+
+We can see that the `ensembles` dataset is a named list with five entries. Each
+entry contains the ensemble forecast of one weather forecasting organization.
+
+
+```{r}
+library(data.table)
+ensembles$CWAO
+range(ensembles$CWAO$date_run)
+sapply(ensembles, function(x) NCOL(x) - 4)
+```
+
+Each ensemble forecast is stored as a `data.table` and contains several entries
+
+date_run
+: the date of the initial condition from which the ensemble starts. The run time
+is 00TC and the lead time 30h, so that each forecast is valid for the following
+day at 6UTC. Each ensemble covers two years with one forecast per day, from
+March 2019 to March 2021 (731 dates, October 2019 being missing).
+
+latitude, longitude
+: latitude and longitude of the nearest grid-point to the weather station (in °)
+
+1 ... M
+: the forecast temperature for each member (in Kelvins). Note the number *M* of
+members varies from one ensemble to the other (from 11 for the DEMS ensemble up
+to 50 for the ECMF ensemble). Actually each ensemble has one more member,
+called the *control member*, not included in this data set
+
+T
+: the 2-m height temperaure (in Kelvins) measured at the Toulouse-Blagnac
+weather station in France.
+
+## Contents of the `ppensembles` datasets
+
+As we will see below ensembles have flaws that make their forecast probabilities
+unactionable for decision making. But since these forecast error are not
+completely random one can use machine learning methods to extract information
+from past forecast/observation archive and correct those errors. For ensemble
+forecast a much-used method is non homogeneous regression (NHR) introduced by
+Gneiting et al. (2005). In a nutshell NHR posits that the forecast parameter
+obeys some chosen probability distribution whose parameters depend on the ensemble
+statistics. The relationship between the probability distribution's parameters
+and the ensemble statistics is fitted with likelihood maximization for instance.
+
+The `ensembles` dataset has been post-processed with NHR by supposing the
+forecast temperature follows a Gaussian distribution whose mean and standard
+deviation linearly depends on the ensemble mean and standard deviation
+respectively. The regression coefficients have been adjusted by minimizing the
+CRPS over a 60-day sliding window. The `ppensembles` dataset has the same
+structure as the `ensembles` dataset with the "members" being a 30-sample from
+the forecast distribution.
+
+```{r}
+ppensembles <- ppensembles
+print(names(ppensembles))
+print(str(ppensembles$ECMF))
+sapply(ppensembles, function(x) NCOL(x) - 4)
+```
+
+# Building and representing a rank histogram
+
+The workhorse to build rank histograms is the S3 generic function `rkhist`.
+Let's start with one rank histogram. We can build it by sending a forecast
+matrix and an observation vector into `rkhist`.
+
+```{r}
+iobs <- which(names(ensembles$CWAO) == "T")
+ifcst <- 4:(iobs - 1)
+M <- length(ifcst)
+K <- M + 1
+print(paste("Number of members:", M))
+fcst <- data.matrix(ensembles$CWAO[, ifcst, with = FALSE])
+obs <- unlist(ensembles$CWAO[, iobs, with = FALSE])
+rkh <- rkhist(fcst = fcst, obs = obs)
+class(rkh)
+str(rkh)
+```
+
+The `rkhist` functions return an S3 object with class `c("rkhist", "matrix")`.
+Since the ensemble from CWAO has 20 members, the rank histogram comprises
+$K = 21$ possible ranks for the observation. The returned object contains a
+matrix with one row by rank histogram (here only 1) and $K$ columns.
+
+We can `plot` and `print` an `rkhist` object since both the corresponding
+methods have been implemented for this class. By setting the argument `what` to
+`counts`, `percents` or `proportions`, we can choose to represent the count,
+the frequency (in %) or proportion of observations in each rank respectively.
+
+```{r}
+plot(rkh)
+plot(rkh, what = "percents")
+rownames(rkh) <- "CWAO"
+print(rkh)
+print(rkh, what = "percents", digits = 1L)
+```
+
+The plots show the expected count (or percentage) for a perfectly balanced rank
+histogram as a dashed horizontal line. It can be seen that the rank histogram is
+far from flat. From the printed tables we can see that the rank 21 contains 573
+of the 731 observations, which means that the observation is higher than the
+highest forecast value 78% of the time, much higher than the expected value
+$4.8\%$. This kind of imbalance is quite common for ensemble forecasts for
+near-surface parameters.
+
+# Applying the Jolliffe-Primo flatness test
+
+## Defining deviate vectors
+
+As stated earlier the Jolliffe-Primo flatness test requires a set of deviate
+vectors. Some deviate vectors can be obtained with functions named `deviate_XXX`
+where `XXX` is the required deviate shape.
+
+```{r}
+linear <- deviate_linear(k = K)
+plot(linear)
+U <- deviate_U(k = K)
+plot(U)
+V <- deviate_V(k = K)
+plot(V)
+ends <- deviate_ends(k = K)
+plot(ends)
+wave <- deviate_wave(k = K)
+plot(wave)
+print(is(wave))
+```
+
+Each `deviate_XXX` function requires an argument `k` that is the number of
+components of the deviate vector, and returns an `rkhist` object. Deviate
+vectors are not rank histogram but this class is used so that one can `plot` and
+`print` deviate vectors. The `deviate_XXX` functions return only one deviate
+vectors but function `get_deviates` allows to get a set of several deviate
+vectors.
+
+```{r}
+deviates <- get_deviates(k = K, shapes = c("linear", "U", "V", "ends", "wave"))
+print(str(deviates))
+plot(deviates)
+```
+
+Function `get_deviates` requires the number of possible categories (`k`) and the
+required shapes (`shapes`), and returns an `rkhist` object with one deviate by
+row for each requires shape. Internally this function calls a function named
+`deviate_XXX` for each required shape in `shapes`. This allows the user to
+easily implements its own deviate by following this naming convention to code
+its own function returning an `rkhist` object.
+
+## Checking and imposing the requirements for the Jolliffe-Primo flatness test
+
+As stated above the Jolliffe-Primo flatness test requires a set of deviate
+vectors such that the set is orthonormal. This can be checked with function
+`is_JP_ready`.
+
+```{r}
+check <- is_JP_ready(x = deviates, tol = 0.001)
+print(str(check))
+```
+
+This function requires as argument a matrix `x` containing the checked vectors
+(one vector in each row). It checks whether the sum of components of each vector
+is 0 and the set of vectors is orthonormal. The optional argument `tol` gives a
+tolerance on the conditions. `is_JP_ready` returns a named list with the
+following entries
+
+isOK
+: a logical. Are both requirements true?
+
+tol
+: a numeric. The tolerance used to check the requirements.
+
+crossprod
+: a matrix. This is the cross product between the row-vectors of the input
+matrix
+
+sums
+: a named numeric vector containing the sum of components of each row-vector in
+the input matrix
+
+x
+: the input vectors
+
+Here we can see that the set of vectors `deviates` do not meet the requirements
+for the Jolliffe-Primo test due to the deviates `U`, `V` and `ends` being not
+orthogonal. One can use the function `make_JP_ready` to enforce the requirements
+on a set of vectors.
+
+```{r}
+deviates_ok <- make_JP_ready(x = deviates)
+check <- is_JP_ready(x = deviates_ok)
+plot(deviates_ok)
+```
+
+Function `make_JP_ready` returns a vector set that can be used in the
+Jolliffe-Primo flatness test, by using the Grahm-Schmidt method on the input
+set (if necessary) and normalizing the sum of each vector's components to zero
+(if necessary). But as can be noted from the plots above the shapes in the
+returned set may differ a lot from the ones in the inputted vector set (compare
+the histogram for `V` and `ends` with the previous plot). It is thus strongly
+advised to check visually that the deviates returned by this function really
+match the shapes the user wants to test the presence of in the histograms.
+
+In the following we use the default set of deviate vectors
+`c("linear", "U", "wave")`.
+
+```{r}
+deviates <- get_deviates(k = K)
+print(row.names(deviates))
+```
+
+## Applying the Jolliffe-Primo flatness test
+
+Function `JP_test` implements the Jolliffe-Primo flatness test. It is an S3
+generic function that requires two arguments `rkhists` (the histograms to be
+tested) and `deviates` (the matrix of deviates, with one deviate in each row).
+
+```{r}
+JP <- JP_test(rkhists = rkh, deviates = deviates)
+print(str(JP))
+```
+
+The returned object by the implemented method is a named list with the following
+entries:
+
+deviates
+: the set of $S$ deviates used as argument of the function
+
+rkhists
+: the $R$ (rank) histograms used as argument of the function
+
+test
+: this is a 3xRx(S+1) array containing the information necessary for the test.
+
+The `test` entry has the following contents in each dimension:
+
+projections
+: the projection of each rank histogram on each deviate
+
+statistics
+: the corresponding $\chi^2$ test statistics
+
+pvalues
+: the p-values computed from the test statistics
+
+Let's note that the last dimension of the `test` entry has length the number of
+deviates *plus one*. Indeed if the square of the projections of the histogram
+vector on each deviate follows a $\chi^2$ distribution with one degree of
+liberty, the module of the projection of the histogram vector on the complement
+of the vector space spanned by the set of deviates follow a $\chi^2$ distribution
+with $K -S -1$ degrees of liberty. `Jp_test` computes the test
+statistics and p-value for this complement vector. This allows to test whether
+deviations other than the one tested may be present in the rank histogram. But,
+as for the $\chi^2$ test on the initial histogram, this test is not powerful in
+detecting specific shapes. The name of this dimension in the `test` entry is
+*resid.* (for *residuals*).
+
+Finally let's note that this function does not actually perform the
+Jolliffe-Primo test but return the required information (p-values) to perform
+it. This implementation choice has been made because the flatness test is
+usually a multi-hypothesis statistical testing (several deviations are tested
+for several histograms), which requires corrections, such as the Bonferroni
+correction or the Benjamini-Hochberg procedure. The Benjamini-Hochberg
+procedure is implemented in function `BH_procedure` of the `flatness` package.
+See Benjamini and Hochberg (1995) for more details.
+
+## Printing and plotting results
+
+Function `JP_test` is an S3 generic function whose methods should return an
+object with S3 class `JPtest`. Corresponding methods for class `JPtest` of
+functions `print` and `lattice::levelplot` have been implemented.
+
+```{r}
+print(JP)
+print(JP, what = "pvalues")
+library(lattice)
+levelplot(JP)
+levelplot(JP, what = "projections", main = "projections")
+```
+
+These two functions take a `JPtest` object as argument and a character vector as
+`what` argument that allows to choose what is printed or plotted. It can take
+values "projections", "statistics" or "pvalues" to display the associated
+dimension of the `test` entries in the inputted `JPtest` object.
+
+## Working with several ensembles
+
+If all the ensembles have the same number of members (such as in the
+`ppensembles` data set) one can process them in one go.
+
+```{r}
+ppensembles <- ppensembles
+fcsts <- lapply(ppensembles, function(x) x[, 4:33, with =FALSE])
+obss <- lapply(ppensembles, function(x) t(x[, 34, with =FALSE]))
+rkhists <- rkhist(fcsts, obss)
+print(rkhists)
+plot(rkhists, what = "percents")
+plot(rkhists)
+deviates <- get_deviates(k = NCOL(rkhists))
+ppJP <- JP_test(rkhists, deviates)
+levelplot(ppJP, main = "pvalues")
+levelplot(ppJP, what = "projections", main = "projections")
+```
+
+# Flatness indices
+
+Wilks (2019) compared several indices computed from rank histograms that have
+been proposed to assess whether a rank histogram is flat. These indices can be
+computed with the S3 generic function `flatness_indices` of the `flatness`
+package.
+
+```{r}
+indices <- flatness_indices(rkhists)
+print(indices)
+```
+
+Function `flatness_indices` takes as argument a matrix containing (rank)
+histograms in each row (by default, unless the argument `col_wise` is set to
+`TRUE`). It returns a matrix with three columns and as many rows as inputted
+histograms. The three columns correspond to the tree computed flatness indices
+the $\chi^2$ statistics, the reliability index and the entropy. Please refer to
+Wilks (2019) and references therein for further details on the last two indices.
+
+### **References**
+
+Benjamini, Y., & Hochberg, Y. (1995). Controlling the false discovery rate: a
+practical and powerful approach to multiple testing. *Journal of the Royal
+statistical society: series B (Methodological)*, **57**(1), 289-300.
+https://doi.org/10.1111/j.2517-6161.1995.tb02031.x
+
+Elmore, K.L. (2005) Alternatives to the chi-square test for evaluating rank
+histograms from ensemble forecasts. *Weather and forecasting*, **20**, 789–795.
+https://doi.org/10.1175/WAF884.1
+
+Gneiting, T., Raftery, A. E., Westveld III, A. H., & Goldman, T. (2005).
+Calibrated probabilistic forecasting using ensemble model output statistics and
+minimum CRPS estimation. *Monthly Weather Review*, **133**(5), 1098-1118.
+https://doi.org/10.1175/MWR2904.1
+
+Jolliffe, I.T. and Primo,C. (2008) Evaluating rank histograms using
+decompositions of the chi-square test statistic. *Monthly Weather Review*,
+**136**, 2133–2139. https://doi.org/10.1175/2007MWR2219.1
+
+Wilks, D. S. (2019). Indices of rank histogram flatness and their sampling
+properties. *Monthly Weather Review*, **147**(2), 763-769.
+https://doi.org/10.1175/MWR-D-18-0369.1
+
+Zamo, M, Bel, L, Mestre, O. (2021) Sequential aggregation of probabilistic
+forecasts — Application to wind speed ensemble forecasts. *J R Stat Soc Series
+C.*, **70**, 202– 225. https://doi.org/10.1111/rssc.12455
+
